@@ -9,7 +9,7 @@ id_list = df['id'].tolist()
 # Headers for the API request
 headers = {
     "accept": "application/json",
-    "Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIxYjRlOTZjYTA5ZWNhY2VlNGZiNzMyMWFmZmJhMGEyZiIsIm5iZiI6MTcyMzg5NDIyMS4zMzA5NTksInN1YiI6IjY2OGI5YjcwNDVlNTM2NWJiYjk4Yzg0YSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.WdHShyvaa4S0uoWlC98xDOvXVvApmSGjGrG9x_ICci0"
+    "Authorization": "{api_key}"
 }
 
 
