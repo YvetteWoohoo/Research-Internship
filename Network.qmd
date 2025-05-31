@@ -1,0 +1,974 @@
+---
+title: "Network"
+format: pdf
+editor: visual
+---
+
+### Network
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(igraph)
+library(ggraph)
+library(car)
+film_final <- read.csv("/Users/yvette/Desktop/film_final.csv")
+cast_and_crew_full <- read.csv("/Users/yvette/Desktop/film/cast_and_crew_full_1.csv")
+```
+
+```{r}
+#| echo: false
+#| echo: false
+#| warning: false
+# Distribution of directors and producers
+dp <- cast_and_crew_full %>%
+  group_by(movie_id) %>%
+  summarise(
+    num_directors = sum(job == 'Director', na.rm = TRUE),
+    num_producers = sum(job == 'Producer', na.rm = TRUE)
+  )
+# summary(dp$num_directors)
+# summary(dp$num_producers)
+
+# Select actors
+actors <- cast_and_crew_full  %>%
+  filter(department == "Acting", order >= 0, order <= 5) %>%
+  select(movie_id, name, gender, id) # Select relevant columns
+
+# Select directors (minimum order)
+directors <- cast_and_crew_full %>%
+  filter(job == "Director") %>%
+  group_by(movie_id) %>%
+  filter(order == min(order)) %>%  # Get the director with the smallest order
+  select(movie_id, name, gender, id) # Select relevant columns
+
+# Select producers (minimum order)
+producers <- cast_and_crew_full %>%
+  group_by(movie_id) %>%
+  filter(job == "Executive Producer" | (job == "Producer" & !("Executive Producer" %in% job))) %>%
+  filter(order == min(order)) %>%  # Get the producer with the smallest order
+  select(movie_id, name, gender, id)
+
+# Combine all selected nodes into one edges dataset
+edges <- bind_rows(actors %>% mutate(node_type = "Actor"), 
+                   directors %>% mutate(node_type = "Director"), 
+                   producers %>% mutate(node_type = "Producer"))
+
+nodes <- edges
+
+# Generate actor-actor edges
+actor_actor_edges <- edges %>%
+  group_by(movie_id) %>%
+  summarize(
+    actors = list(id[node_type == "Actor"]),
+    directors = list(id[node_type == "Director"]),
+    producers = list(id[node_type == "Producer"]),
+    .groups = "drop"
+  ) %>%
+  # Generate actor-actor edges if there are at least 2 actors
+  unnest(c(actors)) %>%
+  group_by(movie_id) %>%
+  summarize(
+    actor_actor_edges = ifelse(length(actors) > 1, list(combn(actors, 2, simplify = FALSE)), list(NULL)),
+    .groups = "drop"
+  ) %>%
+  unnest(actor_actor_edges, names_sep = "_") %>%
+  mutate(
+    from = map_chr(actor_actor_edges, ~ as.character(.x[1])),
+    to = map_chr(actor_actor_edges, ~ as.character(.x[2])),
+    type = "actor-actor"
+  ) %>%
+  select(movie_id, from, to, type) 
+
+# Generate director-actor edges
+director_actor_edges <- edges %>%
+  filter(node_type == "Director") %>%
+  group_by(movie_id) %>%
+  summarize(
+    directors = list(as.character(id)),  # Convert 'id' to character for consistency
+    .groups = "drop"
+  ) %>%
+  unnest(directors) %>%  # Unnest the list of directors
+  left_join(
+    edges %>%
+      filter(node_type == "Actor") %>%
+      select(movie_id, id),  # Ensure the 'id' column exists
+    by = "movie_id"
+  ) %>%
+  mutate(actor_id = as.character(id)) %>%  # Convert 'id' to character before using it
+  select(movie_id, from = directors, to = actor_id) %>%  # Use 'directors' and 'actor_id'
+  mutate(type = "director-actor") %>%
+  drop_na()
+
+# Generate producer-actor edges
+producer_actor_edges <- edges %>%
+  filter(node_type == "Producer") %>%
+  group_by(movie_id) %>%
+  summarize(
+    producers = list(as.character(id)),  # Convert 'id' to character for consistency
+    .groups = "drop"
+  ) %>%
+  unnest(producers) %>%  # Unnest the list of directors
+  left_join(
+    edges %>%
+      filter(node_type == "Actor") %>%
+      select(movie_id, id),  # Ensure the 'id' column exists
+    by = "movie_id"
+  ) %>%
+  mutate(actor_id = as.character(id)) %>%  # Convert 'id' to character before using it
+  select(movie_id, from = producers, to = actor_id) %>%  # Use 'directors' and 'actor_id'
+  mutate(type = "producer-actor") %>%
+  drop_na()
+
+# Generate producer-director edges
+producer_director_edges <- edges %>%
+  filter(node_type == "Producer") %>%
+  group_by(movie_id) %>%
+  summarize(
+    producers = list(id),
+    .groups = "drop"
+  ) %>%
+  unnest(producers) %>%
+  left_join(
+    edges %>%
+      filter(node_type == "Director") %>%
+      select(movie_id, id), 
+    by = "movie_id"
+  ) %>%
+  mutate(director_id = as.character(id)) %>% 
+  select(movie_id, from = producers, to = director_id) %>%  # Ensure 'from' is character
+  mutate(type = "producer-director") %>%
+  drop_na()
+
+producer_director_edges <- producer_director_edges %>%
+  mutate(from = as.character(from))
+
+# Combine all edges into one data frame
+all_edges <- bind_rows(actor_actor_edges, director_actor_edges, producer_actor_edges, producer_director_edges)
+
+edges$id <- as.character(edges$id)
+nodes_info <- edges %>%
+  select(movie_id,id,name,gender) %>%
+  distinct()
+combined_edges <- all_edges %>%
+  left_join(nodes_info, by = c("from" = "id", "movie_id" = "movie_id")) 
+
+
+network_actor <- graph_from_data_frame(d = actor_actor_edges, directed = FALSE) 
+network_producer <- graph_from_data_frame(d = producer_actor_edges, directed = FALSE) 
+network_director <- graph_from_data_frame(d = director_actor_edges, directed = FALSE) 
+network_producer_director <- graph_from_data_frame(d = producer_director_edges, directed = FALSE) 
+network_all <- graph_from_data_frame(d = combined_edges, directed = FALSE) 
+```
+
+```{r}
+#| echo: false
+#| warning: false
+# List of networks
+networks <- list(
+  network_all = network_all,
+  network_actor = network_actor,
+  network_producer = network_producer,
+  network_director = network_director,
+  network_producer_director = network_producer_director
+)
+
+# Assuming networks is a list of network objects
+results <- data.frame(Network = character(), 
+                      Num_Nodes = integer(), 
+                      Num_Edges = integer(),
+                      Num_Components = integer(), 
+                      Num_Isolates = integer(), 
+                      Graph_Density = numeric(),
+                      Avg_Degree = numeric(),
+                      Avg_Degree_In = numeric(), 
+                      Avg_Degree_Out = numeric(),
+                      Degree_Assortativity = numeric(), 
+                      Avg_Path_Length = numeric(),
+                      Avg_Betweenness = numeric(), 
+                      Mean_Closeness = numeric(), 
+                      Mean_Eigenvector = numeric()
+                      )
+
+# Loop over each network
+for (net_name in names(networks)) {
+  net <- networks[[net_name]]
+  
+  # Network-level metrics
+  num_nodes <- vcount(net)
+  num_edges <- ecount(net)
+  components <- igraph::components(net)
+  isolate_count <- sum(degree(net) == 0)
+  graph_density <- edge_density(net)
+  degree_assort <- assortativity_degree(net)
+  avg_path_length <- mean_distance(net)
+  
+  # Calculate centrality metrics
+  centrality_df <- data.table(
+    id = V(net)$name,
+    degree = degree(net, mode = "all"),
+    betweenness = betweenness(net, directed = FALSE),
+    closeness = closeness(net),
+    eigenvector = eigen_centrality(net, directed = FALSE)$vector
+  )
+  
+  # Summarize centrality metrics for the network
+  mean_degree <- mean(centrality_df$degree)
+  mean_betweenness <- mean(centrality_df$betweenness)
+  mean_closeness <- mean(centrality_df$closeness)
+  mean_eigenvector <- mean(centrality_df$eigenvector)
+  
+  # Append network-level metrics and centrality summaries to the results data frame
+  results <- rbind(results, data.frame(
+    Network = net_name,
+    Num_Nodes = num_nodes,
+    Num_Edges = num_edges,
+    Num_Components = length(components$csize),
+    Graph_Density = graph_density,
+    Avg_Degree = mean_degree,
+    Degree_Assortativity = degree_assort,
+    Avg_Path_Length = avg_path_length,
+    Avg_Betweenness = mean_betweenness,
+    Avg_Closeness = mean_closeness,
+    Avg_Eigenvector = mean_eigenvector
+  ))
+}
+```
+
+```{r}
+# Initialize results data frame
+modularity_results <- data.frame(Network = character(), Algorithm = character(), Modularity = numeric(), Communities = integer())
+
+# Simplify network_all to an undirected network
+net <- as.undirected(network_all, mode = 'collapse')
+
+# Walktrap Community Detection
+walk_clustering <- cluster_walktrap(net, step = 10)
+modularity_walktrap <- modularity(walk_clustering)
+num_communities_walktrap <- max(membership(walk_clustering))
+
+modularity_results <- rbind(modularity_results, 
+                             data.frame(Network = "network_all", 
+                                        Algorithm = "Walktrap", 
+                                        Modularity = modularity_walktrap, 
+                                        Communities = num_communities_walktrap))
+```
+
+### Individual Variable
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+node_individual_0 <- nodes %>%
+  left_join(film_final %>% 
+              dplyr::select(movie_id, release_date, box, artistic, box_artistic, profit, log_profit),
+            by = "movie_id") %>%
+  distinct(movie_id, id, .keep_all = TRUE) %>%  # Remove duplicates based on movie_id and id
+  arrange(id, release_date) %>%
+  group_by(id) %>%
+  mutate(profit_pre = lag(profit, default = 0)) %>%  # Get the previous profit, default to 0 if NA
+  mutate(log_profit_pre = log(pmax(profit_pre, 0) + 1)) %>% 
+  mutate(profit_pre_cumulative = cumsum(lag(profit, default = 0))) %>% # Cumulative sum of previous profit
+  mutate(log_profit_pre_cumulative = log(pmax(profit_pre_cumulative, 0) + 1)) %>%
+  ungroup()
+
+node_individual_0$id <- factor(node_individual_0$id)
+
+node_individual <- nodes %>%
+  left_join(film_final %>% 
+              dplyr::select(movie_id, release_date, box, artistic, box_artistic, profit, log_profit),
+            by = "movie_id") %>%
+  arrange(id, release_date) %>%
+  group_by(id) %>%
+  mutate(
+    # Career length based on node_type
+    career_length = cumsum(!duplicated(movie_id)), 
+    actor_career_length = cumsum(node_type == "Actor"),
+    director_career_length = cumsum(node_type == "Director"),
+    producer_career_length = cumsum(node_type == "Producer"),
+    # Actor success variables
+    prev_actor_box_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box == 1 & node_type == "Actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_actor_artistic_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 1 & node_type == "Actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_actor_box_artistic_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 1 & node_type == "Actor" & !duplicated(movie_id)), default = 0)
+    ),
+    
+    # Director success variables
+    prev_director_box_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box == 1 & node_type == "Director" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_director_artistic_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 1 & node_type == "Director" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_director_box_artistic_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 1 & node_type == "Director" & !duplicated(movie_id)), default = 0)
+    ),
+    
+    # Producer success variables
+    prev_producer_box_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box == 1 & node_type == "Producer" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_producer_artistic_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 1 & node_type == "Producer" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_producer_box_artistic_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 1 & node_type == "Producer" & !duplicated(movie_id)), default = 0)
+    ),
+
+    # Actor failure variables
+    prev_actor_box_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box == 0 & node_type == "Actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_actor_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 0 & node_type == "Actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_actor_box_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 0 & node_type == "Actor" & !duplicated(movie_id)), default = 0)
+    ),
+
+    # Director failure variables
+    prev_director_box_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box == 0 & node_type == "Director" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_director_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 0 & node_type == "Director" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_director_box_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 0 & node_type == "Director" & !duplicated(movie_id)), default = 0)
+    ),
+
+    # Producer failure variables
+    prev_producer_box_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box == 0 & node_type == "Producer" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_producer_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 0 & node_type == "Producer" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_producer_box_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 0 & node_type == "Producer" & !duplicated(movie_id)), default = 0)
+    ),
+    # General failure variables
+    prev_box_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box == 1 & !duplicated(movie_id)), default = 0)
+    ),
+    prev_artistic_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 1 & !duplicated(movie_id)), default = 0)
+    ),
+    prev_box_artistic_success= if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 1 & !duplicated(movie_id)), default = 0)
+    ),
+    prev_box_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box == 0 & !duplicated(movie_id)), default = 0)
+    ),
+    prev_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 0 & !duplicated(movie_id)), default = 0)
+    ),
+    prev_box_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 0 & !duplicated(movie_id)), default = 0)
+    )) %>%
+  mutate(
+    # Calculate frequency as ratio of success over career length
+    freq_prev_actor_box_success = ifelse(actor_career_length > 0, prev_actor_box_success / actor_career_length, 0),
+    freq_prev_actor_artistic_success = ifelse(actor_career_length > 0, prev_actor_artistic_success / actor_career_length, 0),
+    freq_prev_actor_box_artistic_success = ifelse(actor_career_length > 0, prev_actor_box_artistic_success / actor_career_length, 0),
+    
+    freq_prev_director_box_success = ifelse(director_career_length > 0, prev_director_box_success / director_career_length, 0),
+    freq_prev_director_artistic_success = ifelse(director_career_length > 0, prev_director_artistic_success / director_career_length, 0),
+    freq_prev_director_box_artistic_success = ifelse(director_career_length > 0, prev_director_box_artistic_success / director_career_length, 0),
+    
+    freq_prev_producer_box_success = ifelse(producer_career_length > 0, prev_producer_box_success / producer_career_length, 0),
+    freq_prev_producer_artistic_success = ifelse(producer_career_length > 0, prev_producer_artistic_success / producer_career_length, 0),
+    freq_prev_producer_box_artistic_success = ifelse(producer_career_length > 0, prev_producer_box_artistic_success / producer_career_length, 0),
+    
+    freq_prev_box_success = ifelse(career_length > 0, prev_box_success / career_length, 0),
+    freq_prev_artistic_success = ifelse(career_length > 0, prev_artistic_success / career_length, 0),
+    freq_prev_box_artistic_success = ifelse(career_length > 0, prev_box_artistic_success / career_length, 0),
+    
+    freq_prev_box_failure = ifelse(career_length > 0, prev_box_failure / career_length, 0),
+    freq_prev_artistic_failure = ifelse(career_length > 0, prev_artistic_failure / career_length, 0),
+    freq_prev_box_artistic_failure = ifelse(career_length > 0, prev_box_artistic_failure / career_length, 0),
+    
+    freq_prev_actor_box_failure = ifelse(actor_career_length > 0, prev_actor_box_failure / actor_career_length, 0),
+    freq_prev_actor_artistic_failure = ifelse(actor_career_length > 0, prev_actor_artistic_failure / actor_career_length, 0),
+    freq_prev_actor_box_artistic_failure = ifelse(actor_career_length > 0, prev_actor_box_artistic_failure / actor_career_length, 0),
+    
+    freq_prev_director_box_failure = ifelse(director_career_length > 0, prev_director_box_failure / director_career_length, 0),
+    freq_prev_director_artistic_failure = ifelse(director_career_length > 0, prev_director_artistic_failure / director_career_length, 0),
+    freq_prev_director_box_artistic_failure = ifelse(director_career_length > 0, prev_director_box_artistic_failure / director_career_length, 0),
+    
+    freq_prev_producer_box_failure = ifelse(producer_career_length > 0, prev_producer_box_failure / producer_career_length, 0),
+    freq_prev_producer_artistic_failure = ifelse(producer_career_length > 0, prev_producer_artistic_failure / producer_career_length, 0),
+    freq_prev_producer_box_artistic_failure = ifelse(producer_career_length > 0, prev_producer_box_artistic_failure / producer_career_length, 0)
+  ) %>%
+  ungroup()
+
+node_individual <- node_individual %>%
+  mutate(node_type = as.factor(node_type),
+         gender = as.factor(gender),
+         id = as.factor(id),
+         release_date = as.Date(release_date),
+         box = as.factor(box),
+         artistic = as.factor(artistic),
+         box_artistic = as.factor(box_artistic)
+         ) %>% 
+  left_join(node_individual_0 %>% 
+              dplyr::select(movie_id, id, log_profit_pre, log_profit_pre_cumulative),
+                       by = c("movie_id", "id")) %>%
+  arrange(id, release_date)
+
+node_individual_latest <- node_individual %>%
+  mutate(release_date = as.Date(release_date)) %>%  # Ensure release_date is in Date format
+  group_by(id) %>%  # Group by individual (id)
+  filter(release_date == max(release_date)) %>%  # Filter for the row with the latest release_date
+  filter(gender != 0) %>%
+  ungroup()
+
+node_individual_film <- node_individual %>%
+  group_by(movie_id) %>%
+  summarize(
+    avg_prev_box_success = mean(prev_box_success, na.rm = TRUE),
+    avg_prev_artistic_success = mean(prev_artistic_success, na.rm = TRUE),
+    avg_prev_box_artistic_success = mean(prev_box_artistic_success, na.rm = TRUE),
+    
+    avg_prev_actor_box_success = mean(prev_actor_box_success, na.rm = TRUE),
+    avg_prev_actor_artistic_success = mean(prev_actor_artistic_success, na.rm = TRUE),
+    avg_prev_actor_box_artistic_success = mean(prev_actor_box_artistic_success, na.rm = TRUE),
+    avg_prev_director_box_success = mean(prev_director_box_success, na.rm = TRUE),
+    avg_prev_director_artistic_success = mean(prev_director_artistic_success, na.rm = TRUE),
+    avg_prev_director_box_artistic_success = mean(prev_director_box_artistic_success, na.rm = TRUE),
+    avg_prev_producer_box_success = mean(prev_producer_box_success, na.rm = TRUE),
+    avg_prev_producer_artistic_success = mean(prev_producer_artistic_success, na.rm = TRUE),
+    avg_prev_producer_box_artistic_success = mean(prev_producer_box_artistic_success, na.rm = TRUE),
+    avg_prev_box_failure = mean(prev_box_failure, na.rm = TRUE),
+    avg_prev_artistic_failure = mean(prev_artistic_failure, na.rm = TRUE),
+    avg_prev_box_artistic_failure = mean(prev_box_artistic_failure, na.rm = TRUE),
+    
+    avg_prev_actor_box_failure = mean(prev_actor_box_failure, na.rm = TRUE),
+    avg_prev_actor_artistic_failure = mean(prev_actor_artistic_failure, na.rm = TRUE),
+    avg_prev_actor_box_artistic_failure = mean(prev_actor_box_artistic_failure, na.rm = TRUE),
+    avg_prev_director_box_failure = mean(prev_director_box_failure, na.rm = TRUE),
+    avg_prev_director_artistic_failure = mean(prev_director_artistic_failure, na.rm = TRUE),
+    avg_prev_director_box_artistic_failure = mean(prev_director_box_artistic_failure, na.rm = TRUE),
+    avg_prev_producer_box_failure = mean(prev_producer_box_failure, na.rm = TRUE),
+    avg_prev_producer_artistic_failure = mean(prev_producer_artistic_failure, na.rm = TRUE),
+    avg_prev_producer_box_artistic_failure = mean(prev_producer_box_artistic_failure, na.rm = TRUE),
+    
+    avg_freq_prev_box_success = mean(freq_prev_box_success, na.rm = TRUE),
+    avg_freq_prev_artistic_success = mean(freq_prev_artistic_success, na.rm = TRUE),
+    avg_freq_prev_box_artistic_success = mean(freq_prev_box_artistic_success, na.rm = TRUE),
+    
+    avg_freq_prev_actor_box_success = mean(freq_prev_actor_box_success, na.rm = TRUE),
+    avg_freq_prev_actor_artistic_success = mean(freq_prev_actor_artistic_success, na.rm = TRUE),
+    avg_freq_prev_actor_box_artistic_success = mean(freq_prev_actor_box_artistic_success, na.rm = TRUE),
+    
+    avg_freq_prev_director_box_success = mean(freq_prev_director_box_success, na.rm = TRUE),
+    avg_freq_prev_director_artistic_success = mean(freq_prev_director_artistic_success, na.rm = TRUE),
+    avg_freq_prev_director_box_artistic_success = mean(freq_prev_director_box_artistic_success, na.rm = TRUE),
+    
+    avg_freq_prev_producer_box_success = mean(freq_prev_producer_box_success, na.rm = TRUE),
+    avg_freq_prev_producer_artistic_success = mean(freq_prev_producer_artistic_success, na.rm = TRUE),
+    avg_freq_prev_producer_box_artistic_success = mean(freq_prev_producer_box_artistic_success, na.rm = TRUE),
+    
+    avg_freq_prev_box_failure = mean(freq_prev_box_failure, na.rm = TRUE),
+    avg_freq_prev_artistic_failure = mean(freq_prev_artistic_failure, na.rm = TRUE),
+    avg_freq_prev_box_artistic_failure = mean(freq_prev_box_artistic_failure, na.rm = TRUE),
+    
+    avg_freq_prev_actor_box_failure = mean(freq_prev_actor_box_failure, na.rm = TRUE),
+    avg_freq_prev_actor_artistic_failure = mean(freq_prev_actor_artistic_failure, na.rm = TRUE),
+    avg_freq_prev_actor_box_artistic_failure = mean(freq_prev_actor_box_artistic_failure, na.rm = TRUE),
+    
+    avg_freq_prev_director_box_failure = mean(freq_prev_director_box_failure, na.rm = TRUE),
+    avg_freq_prev_director_artistic_failure = mean(freq_prev_director_artistic_failure, na.rm = TRUE),
+    avg_freq_prev_director_box_artistic_failure = mean(freq_prev_director_box_artistic_failure, na.rm = TRUE),
+    
+    avg_freq_prev_producer_box_failure = mean(freq_prev_producer_box_failure, na.rm = TRUE),
+    avg_freq_prev_producer_artistic_failure = mean(freq_prev_producer_artistic_failure, na.rm = TRUE),
+    avg_freq_prev_producer_box_artistic_failure = mean(freq_prev_producer_box_artistic_failure, na.rm = TRUE),
+    
+    avg_log_profit_pre = mean(log_profit_pre, na.rm = TRUE),
+    avg_log_profit_pre_cumulative = mean(log_profit_pre_cumulative, na.rm = TRUE),
+    avg_actor_career_length = mean(actor_career_length, na.rm = TRUE),
+    avg_director_career_length = mean(director_career_length, na.rm = TRUE),
+    avg_producer_career_length = mean(producer_career_length, na.rm = TRUE),
+    avg_career_length = mean(career_length, na.rm = TRUE)
+  ) %>%
+  ungroup() 
+```
+
+```{r}
+node_individual_statistics <- node_individual %>%
+  select(log_profit_pre,log_profit_pre_cumulative,career_length,                      actor_career_length,director_career_length,producer_career_length,prev_box_success,prev_artistic_success,prev_box_artistic_success,prev_actor_box_success, prev_actor_artistic_success,prev_actor_box_artistic_success,prev_director_box_success, prev_director_artistic_success,prev_director_box_artistic_success, prev_producer_box_success,prev_producer_artistic_success, prev_producer_box_artistic_success,prev_actor_box_failure,prev_actor_artistic_failure,prev_actor_box_artistic_failure,prev_director_box_failure,prev_director_artistic_failure,prev_director_box_artistic_failure,prev_producer_box_failure,prev_producer_artistic_failure,prev_producer_box_artistic_failure,freq_prev_box_success,freq_prev_artistic_success,freq_prev_box_artistic_success,freq_prev_actor_box_success, freq_prev_actor_artistic_success,freq_prev_actor_box_artistic_success, freq_prev_director_box_success,freq_prev_director_artistic_success, freq_prev_director_box_artistic_success,freq_prev_producer_box_success, freq_prev_producer_artistic_success,freq_prev_producer_box_artistic_success,freq_prev_box_failure,freq_prev_artistic_failure,freq_prev_box_artistic_failure,freq_prev_actor_box_failure,freq_prev_actor_artistic_failure,freq_prev_actor_box_artistic_failure,freq_prev_director_box_failure,freq_prev_director_artistic_failure,freq_prev_director_box_artistic_failure,freq_prev_producer_box_failure,freq_prev_producer_artistic_failure,freq_prev_producer_box_artistic_failure,prev_box_failure,prev_artistic_failure,prev_box_artistic_failure)
+
+# 假设 dataset 是你的数据框 (data frame)
+mean_values <- sapply(node_individual_statistics, mean, na.rm = TRUE)  # Column-wise mean
+stddev_values <- sapply(node_individual_statistics, sd, na.rm = TRUE)  # Column-wise standard deviation
+
+summary_stats <- data.frame(
+  variable = colnames(node_individual_statistics),
+  mean = mean_values,
+  stddev = stddev_values
+)
+
+# 创建你的数据框
+summary_stats <- data.frame(
+  variable = c("log_profit_pre", "log_profit_pre_cumulative", "career_length", "actor_career_length", "director_career_length", "producer_career_length",
+               "prev_box_success", "prev_artistic_success", "prev_box_artistic_success", "prev_actor_box_success", "prev_actor_artistic_success",
+               "prev_actor_box_artistic_success", "prev_director_box_success", "prev_director_artistic_success", "prev_director_box_artistic_success",
+               "prev_producer_box_success", "prev_producer_artistic_success", "prev_producer_box_artistic_success", "prev_actor_box_failure",
+               "prev_actor_artistic_failure", "prev_actor_box_artistic_failure", "prev_director_box_failure", "prev_director_artistic_failure",
+               "prev_director_box_artistic_failure", "prev_producer_box_failure", "prev_producer_artistic_failure", "prev_producer_box_artistic_failure",
+               "freq_prev_box_success", "freq_prev_artistic_success", "freq_prev_box_artistic_success", "freq_prev_actor_box_success",
+               "freq_prev_actor_artistic_success", "freq_prev_actor_box_artistic_success", "freq_prev_director_box_success",
+               "freq_prev_director_artistic_success", "freq_prev_director_box_artistic_success", "freq_prev_producer_box_success",
+               "freq_prev_producer_artistic_success", "freq_prev_producer_box_artistic_success", "freq_prev_box_failure", "freq_prev_artistic_failure",
+               "freq_prev_box_artistic_failure", "freq_prev_actor_box_failure", "freq_prev_actor_artistic_failure", "freq_prev_actor_box_artistic_failure",
+               "freq_prev_director_box_failure", "freq_prev_director_artistic_failure", "freq_prev_director_box_artistic_failure",
+               "freq_prev_producer_box_failure", "freq_prev_producer_artistic_failure", "freq_prev_producer_box_artistic_failure","prev_box_failure","prev_artistic_failure","prev_box_artistic_failure"),
+  mean = c(4.288568078, 5.817071156, 3.631136976, 3.484795326, 2.037868676, 2.904233817, 1.796691353, 0.510552128, 0.41083128, 1.381432527,
+           0.419873237, 0.338160032, 0.221903578, 0.050605975, 0.042128426, 0.193355249, 0.040072915, 0.030542822, 0.843567664, 1.805126954,
+           1.886840158, 0.093516181, 0.264813784, 0.273291333, 0.109990771, 0.263273104, 0.272803197, 0.313153971, 0.053608947, 0.041522298,
+           0.164145152, 0.038491463, 0.03041051, 0.04113514, 0.007516811, 0.006179297, 0.025385292, 0.005387257, 0.004289927, 0.173057318,
+           0.432602342, 0.444688991, 0.098233704, 0.223887393, 0.231968346, 0.021078556, 0.054696885, 0.056034398, 0.016181182, 0.036179217,
+           0.037276547,1.047074616,2.333213842,2.432934689),
+  stddev = c(7.10630177, 8.31217433, 6.16646697, 7.74887407, 15.44825747, 20.23876371, 4.02759293, 1.72595804, 1.46148585, 3.65640529,
+             1.56030913, 1.31101832, 1.0511892, 0.5353287, 0.47136518, 1.382166, 0.41425454, 0.35701377, 2.37195909, 4.5413873, 4.74835542,
+             0.51054973, 1.11105225, 1.14507633, 0.63267632, 1.6171796, 1.65686558, 0.36809302, 0.14450389, 0.12215635, 0.26269766,
+             0.11515277, 0.09807443, 0.15144206, 0.06189187, 0.05420725, 0.11540385, 0.05122964, 0.04554543, 0.2794607, 0.41235292,
+             0.41568628, 0.19221584, 0.31949697, 0.32761316, 0.10249757, 0.17780822, 0.18064209, 0.08559716, 0.14010687, 0.14278989,2.47923015,4.87899310,5.08698353)
+)
+
+# 格式化为两位小数，并合并为 "mean (std)" 格式
+summary_stats$mean_std <- sprintf("%.2f (%.2f)", summary_stats$mean, summary_stats$stddev)
+
+# 选择需要的列并打印结果
+summary_stats_formatted <- summary_stats[, c("variable", "mean_std")]
+print(summary_stats_formatted)
+
+```
+
+## Career length Model
+
+```{r}
+#| echo: false
+#| warning: false
+lm_model_career_success <- lm(
+  career_length ~  node_type + gender + prev_actor_box_success + prev_actor_artistic_success + prev_actor_box_artistic_success + prev_director_box_success + prev_director_artistic_success + prev_director_box_artistic_success + prev_producer_box_success + prev_producer_artistic_success + prev_producer_box_artistic_success + freq_prev_actor_box_success + freq_prev_actor_artistic_success + freq_prev_actor_box_artistic_success + freq_prev_director_box_success + freq_prev_director_artistic_success + freq_prev_director_box_artistic_success + freq_prev_producer_box_success + freq_prev_producer_artistic_success + freq_prev_producer_box_artistic_success  + log_profit_pre + log_profit_pre_cumulative + actor_career_length + director_career_length + producer_career_length,
+  data = node_individual_latest
+)
+
+summary(lm_model_career_success)
+
+
+vif_values <- vif(lm_model_career_success)
+```
+
+### Collaboration Variable
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+edges_value <- all_edges %>%
+  filter(from != to) %>%
+  distinct(movie_id, from, to, type, .keep_all = TRUE) %>% 
+  left_join(
+    film_final %>% 
+      dplyr::select(movie_id, release_date, box, artistic, box_artistic, profit, log_profit),
+    by = "movie_id"
+  ) %>%
+  mutate(
+    pair_min = pmin(from, to),  # 获取较小的 ID
+    pair_max = pmax(from, to)   # 获取较大的 ID
+  ) %>%
+  distinct(movie_id, pair_min, pair_max, .keep_all = TRUE) %>%
+  group_by(pair_min, pair_max) %>%
+  arrange(pair_min, pair_max, release_date) %>%
+  mutate(
+    collaboration_count = cumsum(!duplicated(movie_id)),
+    da_collaboration_count = cumsum(type == "director-actor"),
+    pa_collaboration_count = cumsum(type == "producer-actor"),
+    pd_collaboration_count = cumsum(type == "producer-director"),
+    
+    prev_collaboration_box_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box == 1 & !duplicated(movie_id)), default = 0)
+    ), 
+    prev_collaboration_artistic_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 1 & !duplicated(movie_id)), default = 0)
+    ),
+    prev_collaboration_box_artistic_success = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 1 & !duplicated(movie_id)), default = 0)
+    ), 
+    
+    prev_collaboration_box_failure = if_else(row_number() == 1, 0, lag(cumsum(box == 0 & !duplicated(movie_id)), default = 0)), 
+    prev_collaboration_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(artistic == 0 & !duplicated(movie_id)), default = 0)
+    ),
+    prev_collaboration_box_artistic_failure = if_else(
+      row_number() == 1, 
+      0, 
+      lag(cumsum(box_artistic == 0 & !duplicated(movie_id)), default = 0)
+    ), 
+    
+    # Director-Actor specific collaboration variables
+    prev_da_collaboration_box_success = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box == 1 & type == "director-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_da_collaboration_artistic_success = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(artistic == 1 & type == "director-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_da_collaboration_box_artistic_success = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box_artistic == 1 & type == "director-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_da_collaboration_box_failure = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box == 0 & type == "director-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_da_collaboration_artistic_failure = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(artistic == 0 & type == "director-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_da_collaboration_box_artistic_failure = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box_artistic == 0 & type == "director-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    
+    # Producer-Actor specific collaboration variables
+    prev_pa_collaboration_box_success = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box == 1 & type == "producer-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pa_collaboration_artistic_success = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(artistic == 1 & type == "producer-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pa_collaboration_box_artistic_success = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box_artistic == 1 & type == "producer-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pa_collaboration_box_failure = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box == 0 & type == "producer-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pa_collaboration_artistic_failure = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(artistic == 0 & type == "producer-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pa_collaboration_box_artistic_failure = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box_artistic == 0 & type == "producer-actor" & !duplicated(movie_id)), default = 0)
+    ),
+    
+    # Producer-Director specific collaboration variables
+    prev_pd_collaboration_box_success = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box == 1 & type == "producer-director" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pd_collaboration_artistic_success = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(artistic == 1 & type == "producer-director" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pd_collaboration_box_artistic_success = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box_artistic == 1 & type == "producer-director" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pd_collaboration_box_failure = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box == 0 & type == "producer-director" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pd_collaboration_artistic_failure = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(artistic == 0 & type == "producer-director" & !duplicated(movie_id)), default = 0)
+    ),
+    prev_pd_collaboration_box_artistic_failure = if_else(
+      row_number() == 1, 0, 
+      lag(cumsum(box_artistic == 0 & type == "producer-director" & !duplicated(movie_id)), default = 0)
+    )
+  ) %>%
+  mutate(
+    # Frequencies for collaboration variables
+    freq_prev_collaboration_box_success = ifelse(collaboration_count > 0, prev_collaboration_box_success / collaboration_count, 0),
+    freq_prev_collaboration_artistic_success = ifelse(collaboration_count > 0, prev_collaboration_artistic_success / collaboration_count, 0),
+    freq_prev_collaboration_box_artistic_success = ifelse(collaboration_count > 0, prev_collaboration_box_artistic_success / collaboration_count, 0),
+    freq_prev_collaboration_box_failure = ifelse(collaboration_count > 0, prev_collaboration_box_failure / collaboration_count, 0),
+    freq_prev_collaboration_artistic_failure = ifelse(collaboration_count > 0, prev_collaboration_artistic_failure / collaboration_count, 0),
+    freq_prev_collaboration_box_artistic_failure = ifelse(collaboration_count > 0, prev_collaboration_box_artistic_failure / collaboration_count, 0),
+    
+    # Director-Actor specific frequencies
+    freq_prev_da_collaboration_box_success = ifelse(da_collaboration_count > 0, prev_da_collaboration_box_success / da_collaboration_count, 0),
+    freq_prev_da_collaboration_artistic_success = ifelse(da_collaboration_count > 0, prev_da_collaboration_artistic_success / da_collaboration_count, 0),
+    freq_prev_da_collaboration_box_artistic_success = ifelse(da_collaboration_count > 0, prev_da_collaboration_box_artistic_success / da_collaboration_count, 0),
+    freq_prev_da_collaboration_box_failure = ifelse(da_collaboration_count > 0, prev_da_collaboration_box_failure / da_collaboration_count, 0),
+    freq_prev_da_collaboration_artistic_failure = ifelse(da_collaboration_count > 0, prev_da_collaboration_artistic_failure / da_collaboration_count, 0),
+    freq_prev_da_collaboration_box_artistic_failure = ifelse(da_collaboration_count > 0, prev_da_collaboration_box_artistic_failure / da_collaboration_count, 0),
+    
+    # Producer-Actor specific frequencies
+    freq_prev_pa_collaboration_box_success = ifelse(pa_collaboration_count > 0, prev_pa_collaboration_box_success / pa_collaboration_count, 0),
+    freq_prev_pa_collaboration_artistic_success = ifelse(pa_collaboration_count > 0, prev_pa_collaboration_artistic_success / pa_collaboration_count, 0),
+    freq_prev_pa_collaboration_box_artistic_success = ifelse(pa_collaboration_count > 0, prev_pa_collaboration_box_artistic_success / pa_collaboration_count, 0),
+    freq_prev_pa_collaboration_box_failure = ifelse(pa_collaboration_count > 0, prev_pa_collaboration_box_failure / pa_collaboration_count, 0),
+    freq_prev_pa_collaboration_artistic_failure = ifelse(pa_collaboration_count > 0, prev_pa_collaboration_artistic_failure / pa_collaboration_count, 0),
+    freq_prev_pa_collaboration_box_artistic_failure = ifelse(pa_collaboration_count > 0, prev_pa_collaboration_box_artistic_failure / pa_collaboration_count, 0),
+    
+    # Producer-Director specific frequencies
+    freq_prev_pd_collaboration_box_success = ifelse(pd_collaboration_count > 0, prev_pd_collaboration_box_success / pd_collaboration_count, 0),
+    freq_prev_pd_collaboration_artistic_success = ifelse(pd_collaboration_count > 0, prev_pd_collaboration_artistic_success / pd_collaboration_count, 0),
+    freq_prev_pd_collaboration_box_artistic_success = ifelse(pd_collaboration_count > 0, prev_pd_collaboration_box_artistic_success / pd_collaboration_count, 0),
+    freq_prev_pd_collaboration_box_failure = ifelse(pd_collaboration_count > 0, prev_pd_collaboration_box_failure / pd_collaboration_count, 0),
+    freq_prev_pd_collaboration_artistic_failure = ifelse(pd_collaboration_count > 0, prev_pd_collaboration_artistic_failure / pd_collaboration_count, 0),
+    freq_prev_pd_collaboration_box_artistic_failure = ifelse(pd_collaboration_count > 0, prev_pd_collaboration_box_artistic_failure / pd_collaboration_count, 0)
+  ) %>%
+  ungroup()
+
+edges_value <- edges_value %>%
+  group_by(pair_min, pair_max) %>%
+  arrange(pair_min, pair_max, release_date) %>%
+  mutate(profit_pre_co = lag(profit, default = 0)) %>%  # Get the previous profit, default to 0 if NA
+  mutate(log_profit_pre_co = log(pmax(profit_pre_co, 0) + 1)) %>% 
+  mutate(profit_pre_cumulative_co = cumsum(lag(profit, default = 0))) %>% # Cumulative sum of previous profit
+  mutate(log_profit_pre_cumulative_co = log(pmax(profit_pre_cumulative_co, 0) + 1)) %>%
+  ungroup()
+
+edges_value_latest <- edges_value %>%
+  mutate(release_date = as.Date(release_date)) %>%  # Ensure release_date is in Date format
+  group_by(from,to) %>%  # Group by individual (id)
+  filter(release_date == max(release_date)) %>%  # Filter for the row with the latest release_date
+  ungroup()
+
+edges_value_film <- edges_value %>%
+  group_by(movie_id) %>%
+  summarize(
+    avg_collaboration_count = mean(collaboration_count, na.rm = TRUE),
+    avg_da_collaboration_count = mean(da_collaboration_count, na.rm = TRUE),
+    avg_pa_collaboration_count = mean(pa_collaboration_count, na.rm = TRUE),
+    avg_pd_collaboration_count = mean(pd_collaboration_count, na.rm = TRUE),
+    avg_log_profit_pre_co = mean(log_profit_pre_co, na.rm = TRUE),
+    avg_log_profit_pre_cumulative_co = mean(log_profit_pre_cumulative_co, na.rm = TRUE),
+    
+    avg_prev_collaboration_box_success = mean(prev_collaboration_box_success, na.rm = TRUE),
+    avg_prev_collaboration_artistic_success = mean(prev_collaboration_artistic_success, na.rm = TRUE),
+    avg_prev_collaboration_box_artistic_success = mean(prev_collaboration_box_artistic_success, na.rm = TRUE),
+    avg_prev_collaboration_box_failure = mean(prev_collaboration_box_failure, na.rm = TRUE),
+    avg_prev_collaboration_artistic_failure = mean(prev_collaboration_artistic_failure, na.rm = TRUE),
+    avg_prev_collaboration_box_artistic_failure = mean(prev_collaboration_box_artistic_failure, na.rm = TRUE),
+    
+    avg_prev_da_collaboration_box_success = mean(prev_da_collaboration_box_success, na.rm = TRUE),
+    avg_prev_da_collaboration_artistic_success = mean(prev_da_collaboration_artistic_success, na.rm = TRUE),
+    avg_prev_da_collaboration_box_artistic_success = mean(prev_da_collaboration_box_artistic_success, na.rm = TRUE),
+    avg_prev_da_collaboration_box_failure = mean(prev_da_collaboration_box_failure, na.rm = TRUE),
+    avg_prev_da_collaboration_artistic_failure = mean(prev_da_collaboration_artistic_failure, na.rm = TRUE),
+    avg_prev_da_collaboration_box_artistic_failure = mean(prev_da_collaboration_box_artistic_failure, na.rm = TRUE),
+    
+    avg_prev_pa_collaboration_box_success = mean(prev_pa_collaboration_box_success, na.rm = TRUE),
+    avg_prev_pa_collaboration_artistic_success = mean(prev_pa_collaboration_artistic_success, na.rm = TRUE),
+    avg_prev_pa_collaboration_box_artistic_success = mean(prev_pa_collaboration_box_artistic_success, na.rm = TRUE),
+    avg_prev_pa_collaboration_box_failure = mean(prev_pa_collaboration_box_failure, na.rm = TRUE),
+    avg_prev_pa_collaboration_artistic_failure = mean(prev_pa_collaboration_artistic_failure, na.rm = TRUE),
+    avg_prev_pa_collaboration_box_artistic_failure = mean(prev_pa_collaboration_box_artistic_failure, na.rm = TRUE),
+    
+    avg_prev_pd_collaboration_box_success = mean(prev_pd_collaboration_box_success, na.rm = TRUE),
+    avg_prev_pd_collaboration_artistic_success = mean(prev_pd_collaboration_artistic_success, na.rm = TRUE),
+    avg_prev_pd_collaboration_box_artistic_success = mean(prev_pd_collaboration_box_artistic_success, na.rm = TRUE),
+    avg_prev_pd_collaboration_box_failure = mean(prev_pd_collaboration_box_failure, na.rm = TRUE),
+    avg_prev_pd_collaboration_artistic_failure = mean(prev_pd_collaboration_artistic_failure, na.rm = TRUE),
+    avg_prev_pd_collaboration_box_artistic_failure = mean(prev_pd_collaboration_box_artistic_failure, na.rm = TRUE),
+    
+    avg_freq_prev_collaboration_box_success = mean(freq_prev_collaboration_box_success, na.rm = TRUE),
+    avg_freq_prev_collaboration_artistic_success = mean(freq_prev_collaboration_artistic_success, na.rm = TRUE),
+    avg_freq_prev_collaboration_box_artistic_success = mean(freq_prev_collaboration_box_artistic_success, na.rm = TRUE),
+    avg_freq_prev_collaboration_box_failure = mean(freq_prev_collaboration_box_failure, na.rm = TRUE),
+    avg_freq_prev_collaboration_artistic_failure = mean(freq_prev_collaboration_artistic_failure, na.rm = TRUE),
+    avg_freq_prev_collaboration_box_artistic_failure = mean(freq_prev_collaboration_box_artistic_failure, na.rm = TRUE),
+    
+    avg_freq_prev_da_collaboration_box_success = mean(freq_prev_da_collaboration_box_success, na.rm = TRUE),
+    avg_freq_prev_da_collaboration_artistic_success = mean(freq_prev_da_collaboration_artistic_success, na.rm = TRUE),
+    avg_freq_prev_da_collaboration_box_artistic_success = mean(freq_prev_da_collaboration_box_artistic_success, na.rm = TRUE),
+    avg_freq_prev_da_collaboration_box_failure = mean(freq_prev_da_collaboration_box_failure, na.rm = TRUE),
+    avg_freq_prev_da_collaboration_artistic_failure = mean(freq_prev_da_collaboration_artistic_failure, na.rm = TRUE),
+    avg_freq_prev_da_collaboration_box_artistic_failure = mean(freq_prev_da_collaboration_box_artistic_failure, na.rm = TRUE),
+    
+    avg_freq_prev_pa_collaboration_box_success = mean(freq_prev_pa_collaboration_box_success, na.rm = TRUE),
+    avg_freq_prev_pa_collaboration_artistic_success = mean(freq_prev_pa_collaboration_artistic_success, na.rm = TRUE),
+    avg_freq_prev_pa_collaboration_box_artistic_success = mean(freq_prev_pa_collaboration_box_artistic_success, na.rm = TRUE),
+    avg_freq_prev_pa_collaboration_box_failure = mean(freq_prev_pa_collaboration_box_failure, na.rm = TRUE),
+    avg_freq_prev_pa_collaboration_artistic_failure = mean(freq_prev_pa_collaboration_artistic_failure, na.rm = TRUE),
+    avg_freq_prev_pa_collaboration_box_artistic_failure = mean(freq_prev_pa_collaboration_box_artistic_failure, na.rm = TRUE),
+    
+    avg_freq_prev_pd_collaboration_box_success = mean(freq_prev_pd_collaboration_box_success, na.rm = TRUE),
+    avg_freq_prev_pd_collaboration_artistic_success = mean(freq_prev_pd_collaboration_artistic_success, na.rm = TRUE),
+    avg_freq_prev_pd_collaboration_box_artistic_success = mean(freq_prev_pd_collaboration_box_artistic_success, na.rm = TRUE),
+    avg_freq_prev_pd_collaboration_box_failure = mean(freq_prev_pd_collaboration_box_failure, na.rm = TRUE),
+    avg_freq_prev_pd_collaboration_artistic_failure = mean(freq_prev_pd_collaboration_artistic_failure, na.rm = TRUE),
+    avg_freq_prev_pd_collaboration_box_artistic_failure = mean(freq_prev_pd_collaboration_box_artistic_failure, na.rm = TRUE)
+  ) %>% 
+  ungroup()
+```
+
+```{r}
+edges_statistics <- edges_value %>% 
+  select(collaboration_count,da_collaboration_count,pa_collaboration_count,pd_collaboration_count,prev_collaboration_box_success,prev_collaboration_artistic_success,prev_collaboration_box_artistic_success,prev_collaboration_box_failure,prev_collaboration_artistic_failure,prev_collaboration_box_artistic_failure,prev_da_collaboration_box_success,prev_da_collaboration_artistic_success,prev_da_collaboration_box_artistic_success,prev_da_collaboration_box_failure,prev_da_collaboration_artistic_failure,prev_da_collaboration_box_artistic_failure,prev_pa_collaboration_box_success,prev_pa_collaboration_artistic_success,prev_pa_collaboration_box_artistic_success,prev_pa_collaboration_box_failure,prev_pa_collaboration_artistic_failure,prev_pa_collaboration_box_artistic_failure,prev_pd_collaboration_box_success,prev_pd_collaboration_artistic_success,prev_pd_collaboration_box_artistic_success,prev_pd_collaboration_box_failure,prev_pd_collaboration_artistic_failure,prev_pd_collaboration_box_artistic_failure,freq_prev_collaboration_box_success,freq_prev_collaboration_artistic_success,freq_prev_collaboration_box_artistic_success,freq_prev_collaboration_box_failure,freq_prev_collaboration_artistic_failure,freq_prev_collaboration_box_artistic_failure,freq_prev_da_collaboration_box_success,freq_prev_da_collaboration_artistic_success,freq_prev_da_collaboration_box_artistic_success,freq_prev_da_collaboration_box_failure,freq_prev_da_collaboration_artistic_failure,freq_prev_da_collaboration_box_artistic_failure,freq_prev_pa_collaboration_box_success,freq_prev_pa_collaboration_artistic_success,freq_prev_pa_collaboration_box_artistic_success,freq_prev_pa_collaboration_box_failure,freq_prev_pa_collaboration_artistic_failure,freq_prev_pa_collaboration_box_artistic_failure,freq_prev_pd_collaboration_box_success,freq_prev_pd_collaboration_artistic_success,freq_prev_pd_collaboration_box_artistic_success,freq_prev_pd_collaboration_box_failure,freq_prev_pd_collaboration_artistic_failure,freq_prev_pd_collaboration_box_artistic_failure,log_profit_pre_co,log_profit_pre_cumulative_co)
+
+# 假设 dataset 是你的数据框 (data frame)
+mean_values <- sapply(edges_statistics, mean, na.rm = TRUE)  # Column-wise mean
+stddev_values <- sapply(edges_statistics, sd, na.rm = TRUE)  # Column-wise standard deviation
+
+summary_stats <- data.frame(
+  variable = colnames(edges_statistics),
+  mean = mean_values,
+  stddev = stddev_values
+)
+
+# 构造原始数据框
+data <- data.frame(
+  variable = c(
+    "collaboration_count", "da_collaboration_count", "pa_collaboration_count", 
+    "pd_collaboration_count", "prev_collaboration_box_success", 
+    "prev_collaboration_artistic_success", "prev_collaboration_box_artistic_success", 
+    "prev_collaboration_box_failure", "prev_collaboration_artistic_failure", 
+    "prev_collaboration_box_artistic_failure", "prev_da_collaboration_box_success", 
+    "prev_da_collaboration_artistic_success", "prev_da_collaboration_box_artistic_success", 
+    "prev_da_collaboration_box_failure", "prev_da_collaboration_artistic_failure", 
+    "prev_da_collaboration_box_artistic_failure", "prev_pa_collaboration_box_success", 
+    "prev_pa_collaboration_artistic_success", "prev_pa_collaboration_box_artistic_success", 
+    "prev_pa_collaboration_box_failure", "prev_pa_collaboration_artistic_failure", 
+    "prev_pa_collaboration_box_artistic_failure", "prev_pd_collaboration_box_success", 
+    "prev_pd_collaboration_artistic_success", "prev_pd_collaboration_box_artistic_success", 
+    "prev_pd_collaboration_box_failure", "prev_pd_collaboration_artistic_failure", 
+    "prev_pd_collaboration_box_artistic_failure", "freq_prev_collaboration_box_success", 
+    "freq_prev_collaboration_artistic_success", "freq_prev_collaboration_box_artistic_success", 
+    "freq_prev_collaboration_box_failure", "freq_prev_collaboration_artistic_failure", 
+    "freq_prev_collaboration_box_artistic_failure", "freq_prev_da_collaboration_box_success", 
+    "freq_prev_da_collaboration_artistic_success", "freq_prev_da_collaboration_box_artistic_success", 
+    "freq_prev_da_collaboration_box_failure", "freq_prev_da_collaboration_artistic_failure", 
+    "freq_prev_da_collaboration_box_artistic_failure", "freq_prev_pa_collaboration_box_success", 
+    "freq_prev_pa_collaboration_artistic_success", "freq_prev_pa_collaboration_box_artistic_success", 
+    "freq_prev_pa_collaboration_box_failure", "freq_prev_pa_collaboration_artistic_failure", 
+    "freq_prev_pa_collaboration_box_artistic_failure", "freq_prev_pd_collaboration_box_success", 
+    "freq_prev_pd_collaboration_artistic_success", "freq_prev_pd_collaboration_box_artistic_success", 
+    "freq_prev_pd_collaboration_box_failure", "freq_prev_pd_collaboration_artistic_failure", 
+    "freq_prev_pd_collaboration_box_artistic_failure", "log_profit_pre_co", 
+    "log_profit_pre_cumulative_co"
+  ),
+  mean = c(
+    1.056419166, 0.235474355, 0.18100993, 0.03218877, 0.042756965, 0.009608812, 
+    0.008598463, 0.013662202, 0.046810354, 0.047820704, 0.012052238, 0.003035545, 
+    0.002681773, 0.003873506, 0.012890199, 0.013243971, 0.005378536, 0.001302661, 
+    0.00117974, 0.001719393, 0.005795268, 0.005918189, 0.002642798, 0.000703047, 
+    0.000581625, 0.000941394, 0.002881145, 0.003002566, 0.016173615, 0.003817406, 
+    0.003395733, 0.005368315, 0.017724524, 0.018146197, 0.005245627, 0.001342506, 
+    0.001182353, 0.001760442, 0.005663564, 0.005823716, 0.002332479, 0.000541531, 
+    0.000489107, 0.000776921, 0.002567868, 0.002620292, 0.000848433, 0.000242153, 
+    0.00019339, 0.000349302, 0.000955582, 0.001004346, 0.473372821, 0.48940046
+  ),
+  std = c(
+    0.365040699, 0.473671791, 0.410721828, 0.227478502, 0.30249029, 0.11807478, 
+    0.110400126, 0.137844172, 0.328197614, 0.331746133, 0.151082707, 0.067047679, 
+    0.062624146, 0.069970285, 0.158628713, 0.160469435, 0.102222008, 0.044244144, 
+    0.041303888, 0.047371932, 0.104763264, 0.105838345, 0.105396271, 0.036744223, 
+    0.031921886, 0.039282588, 0.111775071, 0.11592603, 0.09257228, 0.043413327, 
+    0.040776694, 0.050775069, 0.097627248, 0.098745282, 0.057337313, 0.02821463, 
+    0.026447738, 0.031682407, 0.059893223, 0.060709259, 0.03813759, 0.017286185, 
+    0.016327754, 0.021286133, 0.040417162, 0.040809185, 0.02231794, 0.011523001, 
+    0.009939263, 0.013760496, 0.024146641, 0.024896668, 2.773365772, 2.841132103
+  )
+)
+
+# 格式化为 mean (std)
+data$mean_std <- sprintf("%.2f (%.2f)", data$mean, data$std)
+
+# 选择并打印需要的列
+result <- data[, c("variable", "mean_std")]
+print(result)
+
+```
+
+## Collaboration counts Model
+
+```{r}
+#| echo: false
+#| warning: false
+lm_model_collaboration <- lm(
+  collaboration_count ~ prev_pd_collaboration_box_success + prev_pd_collaboration_artistic_success + prev_pd_collaboration_box_artistic_success + prev_da_collaboration_box_success + prev_da_collaboration_artistic_success + prev_da_collaboration_box_artistic_success + prev_pa_collaboration_box_success + prev_pa_collaboration_artistic_success + prev_pa_collaboration_box_artistic_success + freq_prev_pd_collaboration_box_success + freq_prev_pd_collaboration_artistic_success + freq_prev_pd_collaboration_box_artistic_success + freq_prev_da_collaboration_box_success + freq_prev_da_collaboration_artistic_success + freq_prev_da_collaboration_box_artistic_success + freq_prev_pa_collaboration_box_success + freq_prev_pa_collaboration_artistic_success + freq_prev_pa_collaboration_box_artistic_success  + log_profit_pre_co + log_profit_pre_cumulative_co + da_collaboration_count + pa_collaboration_count + pd_collaboration_count,
+  data = edges_value_latest
+)
+
+summary(lm_model_collaboration)
+
+```
+
+```{r}
+#| echo: false
+#| warning: false
+film_final_merged <- film_final %>%
+  left_join(node_individual_film, by = "movie_id") %>%
+  left_join(edges_value_film, by = "movie_id")
+
+write_csv(film_final_merged,"film_final_merged.csv")
+```

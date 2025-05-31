@@ -1,0 +1,452 @@
+---
+title: "Data Cleaning"
+format: pdf
+editor: visual
+---
+
+### Data from TMDB API and IMDB non-commercial
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(gender)
+library(readxl)
+library(data.table)
+library(mice)
+film <- read.csv("/Users/yvette/Desktop/film/tmdb/TMDB_movie_dataset_v11.csv")
+imdb_rating <- read.csv("/Users/yvette/Desktop/film/imdb data noncomercial/title_ratings_transformed.csv")
+```
+
+### merge the fiml data with imdb_ratings
+
+```{r}
+# merge the fiml data with imdb_ratings
+film <- film[order(film$id), ]
+head(film)
+
+cleaned_film <- film %>%
+  select(-backdrop_path, -homepage, -overview, -poster_path, -tagline, -keywords)
+cleaned_film[cleaned_film == ""] <- NA
+
+na_count_per_column <- cleaned_film %>%
+  summarise_all(~ sum(is.na(.)))
+
+cleaned_film <- cleaned_film %>%
+  filter(!is.na(title) & !is.na(release_date) & 
+           !is.na(imdb_id) & !is.na(production_companies)& 
+           !(revenue == 0 & budget == 0) & !(imdb_id == "None"))
+
+na_count_per_column <- cleaned_film %>%
+  summarise_all(~ sum(is.na(.)))
+
+duplicates_in_film <- cleaned_film %>%
+  count(id) %>%
+  filter(n > 1)
+
+print(duplicates_in_film)
+
+cleaned_film <- cleaned_film %>%
+  group_by(id) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+merged_df <- cleaned_film %>%
+  left_join(imdb_rating, by = c("imdb_id" = "tconst"))
+
+film_with_ratings <- merged_df %>%
+  rename(imdb_rating = averageRating,
+         imdb_votes_count = numVotes)
+
+id_list <- as.list(cleaned_film$id)
+id_df <- data.frame(id = unlist(id_list), stringsAsFactors = FALSE)
+write.csv(id_df, file = "/Users/yvette/Desktop/film/id_df.csv", row.names = FALSE)
+```
+
+```{r}
+#| echo: false
+#| warning: false
+film <- film_with_ratings %>%
+  filter(status == 'Released') %>%
+  mutate(imdb_votes_count = ifelse(is.na(imdb_votes_count), 0, imdb_votes_count),
+         adult = as.logical(adult),
+         adult = ifelse(adult == TRUE, 1, 0),
+         english = ifelse(original_language == "en", 1, 0)) %>%
+  mutate(genre = str_extract(genres, "^[^,\\s]+")) %>%
+  dplyr::select(id,title,release_date,runtime,adult,genre,english,revenue,budget,imdb_votes_count,imdb_id)
+```
+
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+oscar <- read_excel("/Users/yvette/Desktop/film/List_of_Academy_Award–nominated_films.xlsx")
+number_of_procom<- read.csv("/Users/yvette/Desktop/film/separated_production_companies.csv")
+runtime <- read_tsv('/Users/yvette/Desktop/film/imdb data noncomercial/title.basics.tsv') 
+origin_country <- read.csv("/Users/yvette/Desktop/film/df.csv")
+```
+
+### Genres, Runtime, Artistic, Number of production companies, title word count,origin country,holiday dummy
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+# genre
+genre_frequency <- film %>%
+  count(genre, sort = TRUE)
+
+film <- film %>%
+  mutate(genres_category = case_when(
+    genre == "Drama" ~ "Drama",
+    genre == "Comedy" ~ "Comedy",
+    genre == "Horror" ~ "Horror",
+    genre == "Action" ~ "Action",
+    genre == "Documentary" ~ "Documentary",
+    TRUE ~ "Other"  
+  ))
+
+runtime <- as_tibble(runtime)
+merged_data <- runtime %>%
+  dplyr::select(tconst, runtimeMinutes) %>%      
+  rename(imdb_id = tconst) %>%           
+  inner_join(select(film, imdb_id, runtime), 
+             by = "imdb_id")  
+
+# runtime 
+merged_data$runtimeMinutes[merged_data$runtimeMinutes == "\\N"] <- NA
+na_count <- sum(is.na(merged_data$runtimeMinutes))
+count_zeros <- sum(merged_data$runtime == 0, na.rm = TRUE)
+count_different <- sum(merged_data$runtimeMinutes != merged_data$runtime, na.rm = TRUE)
+
+merged_data <- merged_data %>%
+  mutate(runtime = as.numeric(runtime),
+         runtimeMinutes = as.numeric(runtimeMinutes)) %>%
+  mutate(runtime = if_else(runtime == 0, runtimeMinutes, runtime))
+
+# title
+film <- film %>%
+  mutate(title_word_count = str_count(title, "\\S+"))
+
+# Oscar
+oscar <- oscar %>%
+  mutate(artistic = 1)
+film <- film %>%
+  left_join(oscar %>% select(Film, artistic), by = c("title" = "Film")) %>%
+  mutate(artistic = ifelse(is.na(artistic), 0, artistic))
+count_award <- sum(film$artistic == 1, na.rm = TRUE)
+
+# Number of production companies
+number_of_procom[number_of_procom == ""] <- NA
+number_of_procom$number_of_com <- rowSums(!is.na(number_of_procom[, -1]))
+number_of_procom <- number_of_procom %>%
+  select(id, number_of_com)
+
+film <- film %>%
+  left_join(number_of_procom, by = "id") 
+
+# origin_country
+origin_country$origin_country <- gsub("\\[|\\]|'", "", origin_country$origin_country)
+origin_country <- origin_country %>%
+  rename(id = movie_id) %>%
+  distinct()
+film <- inner_join(film, origin_country, by = "id")
+film <- film %>%
+  mutate(origin_country_us = ifelse(str_detect(str_split_fixed(origin_country, ",", 2)[, 1], "US"), 1,0))
+
+# Holidays
+film_holiday <- film %>%
+  select(id, release_date) %>%
+  mutate(release_date = date(release_date)) %>%
+  mutate(
+    week = isoweek(release_date),                   
+    year = year(release_date)                      
+  ) %>%
+  mutate(
+    labor_day_week = isoweek(as.Date(paste0(year, "-09-01")) + days(1 - wday(as.Date(paste0(year, "-09-01"))))), # First Monday in September
+    memorial_day_week = isoweek(as.Date(paste0(year, "-05-31")) - days(wday(as.Date(paste0(year, "-05-31"))) - 1)), # Last Monday in May
+    thanksgiving_week = isoweek(as.Date(paste0(year, "-11-01"))) + 3, # 4th Thursday in November
+    new_year_week = isoweek(as.Date(paste0(year, "-01-01"))),       # New Year's Day
+    christmas_week = isoweek(as.Date(paste0(year, "-12-25"))),     # Christmas Day
+    valentine_week = isoweek(as.Date(paste0(year, "-02-14"))),     # Valentine's Day
+    independence_week = isoweek(as.Date(paste0(year, "-07-04"))),  # Independence Day
+    halloween_week = isoweek(as.Date(paste0(year, "-10-31")))      # Halloween week
+  ) %>%
+  mutate(
+    new_year_dummy = if_else(week == new_year_week, 1, 0),
+    valentine_dummy = if_else(week == valentine_week, 1, 0),
+    independence_dummy = if_else(week == independence_week, 1, 0),
+    labor_day_dummy = if_else(week == labor_day_week, 1, 0),
+    memorial_day_dummy = if_else(week == memorial_day_week, 1, 0),
+    thanksgiving_dummy = if_else(week == thanksgiving_week, 1, 0),
+    christmas_dummy = if_else(week == christmas_week, 1, 0),
+    halloween_dummy = if_else(week == halloween_week, 1, 0)
+  ) %>%
+  mutate(
+    holiday_dummy = if_else(
+      new_year_dummy == 1 | valentine_dummy == 1 | independence_dummy == 1 | 
+      labor_day_dummy == 1 | memorial_day_dummy == 1 | 
+      thanksgiving_dummy == 1 | christmas_dummy == 1 | 
+      halloween_dummy == 1, 1, 0
+    )
+  ) %>%
+  select(id,new_year_dummy,valentine_dummy,independence_dummy,labor_day_dummy,memorial_day_dummy,thanksgiving_dummy,christmas_dummy,halloween_dummy,holiday_dummy)
+
+holiday_movies <- sum(film_holiday$holiday_dummy) #4541
+
+film$holiday_dummy <- film_holiday$holiday_dummy
+```
+
+
+
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+cast <- read.csv("/Users/yvette/Desktop/film/cast_data.csv")
+crew <- read.csv("/Users/yvette/Desktop/film/crew_data.csv")
+```
+
+### Gender Imputation (gender_ratio_female_acting, gender_ratio_female_crew, gender_ratio_female_tota, number_of_crew, number_of_departments) and Cast and Crew merged
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+num_unique_values <- length(unique(cast$movie_id))
+
+cast <- cast %>%
+  mutate(gender = factor(gender))
+sorted_cast <- cast %>%
+  arrange(movie_id, order) %>%
+  select(-cast_id,-character) %>%
+  mutate(department = "Acting", job = "Actor/Actress")
+sorted_cast[sorted_cast== ""] <- NA
+
+sorted_crew <- crew %>%
+  mutate(gender = factor(gender)) %>%
+  arrange(movie_id, department) %>%
+  select(-credit_id) %>%
+  group_by(movie_id, department) %>%
+  mutate(order = row_number() - 1) %>%
+  ungroup()
+sorted_crew$department[sorted_crew$department == "Actors"] <- "Crew"
+cast_and_crew_full <- bind_rows(sorted_cast, sorted_crew)
+
+gender_zero <- cast_and_crew_full[cast_and_crew_full$gender == 0, ] %>%
+  select(id,name) %>%
+  separate(name, into = c("first_name", "last_name"), 
+           sep = " ", extra = "merge", fill = "right") %>%
+  mutate(full_name = paste(first_name, last_name))
+
+gender_results <- gender(gender_zero$first_name)
+gender_results_unique <- gender_results[!duplicated(gender_results$name), ]
+gender_zero_r <- gender_zero %>%
+  left_join(gender_results_unique %>% select(name, gender), by = c("first_name" = "name"))
+gender_zero_r <- gender_zero_r %>%
+  mutate(gender = case_when(
+    gender == "male" ~ 2,
+    gender == "female" ~ 1,
+    gender == "other" ~ 3,
+    is.na(gender) ~ 0,  # Handle NA values
+    TRUE ~ NA_real_  # Handle any unexpected values
+  )) %>%
+  rename(imput_gender = gender)
+gender_imput<- cast_and_crew_full %>%
+  left_join(gender_zero_r %>% select(id, imput_gender), by = "id")%>%
+  mutate(imput_gender = ifelse(is.na(imput_gender), 0, imput_gender), 
+    gender = as.numeric(as.character(gender)),  
+    imput_gender = as.numeric(as.character(imput_gender)),  
+    gender = gender + imput_gender) %>%
+  select(-imput_gender)
+
+summary_table <- gender_imput %>%
+  group_by(movie_id) %>%
+  summarise(number_of_crew = n_distinct(name),
+    number_of_departments = n_distinct(department)) %>%
+  select(movie_id, number_of_crew, number_of_departments)
+
+# Aggregating Acting and Other Departments
+gender_ratios_summary <- gender_imput %>%
+  mutate(department_group = ifelse(department == "Acting", "Acting", "Other_Departments")) %>%
+  group_by(movie_id, department_group) %>%
+  summarize(
+    num_male = sum(gender == 2, na.rm = TRUE),
+    num_female = sum(gender == 1, na.rm = TRUE),
+    num_other = sum(gender == 3, na.rm = TRUE),
+    num_unknown = sum(gender == 0, na.rm = TRUE),
+    gender_ratio_female = num_female /(num_female + num_male + num_other + num_unknown),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = department_group,
+    values_from = c(num_male, num_female, num_other, gender_ratio_female),
+    names_glue = "{.value}_{department_group}"
+  ) %>%
+  rename(
+    num_male_acting = num_male_Acting,
+    num_female_acting = num_female_Acting,
+    num_male_crew = num_male_Other_Departments,
+    num_female_crew = num_female_Other_Departments,
+    num_other_acting = num_other_Acting,
+    num_other_crew = num_other_Other_Departments,
+    gender_ratio_female_acting = gender_ratio_female_Acting,
+    gender_ratio_female_crew = gender_ratio_female_Other_Departments
+  ) %>%
+  mutate(gender_ratio_female_total = (num_female_acting + num_female_crew) /
+      (num_female_acting + num_female_crew + num_male_acting + num_male_crew + num_other_acting + num_other_crew),
+      across(everything(), ~ replace_na(., 0))) %>%
+  select(movie_id, gender_ratio_female_acting, gender_ratio_female_crew, gender_ratio_female_total)
+
+filtered_cast_and_crew <- gender_imput %>%
+  filter(movie_id %in% film_final$movie_id)
+write_csv(filtered_cast_and_crew,"cast_and_crew_full.csv")
+
+film <- film %>%
+  left_join(summary_table, by = c("id" = "movie_id")) %>%
+  left_join(gender_ratios_summary, by = c("id" = "movie_id"))
+```
+
+### Imputation and Dependent variables
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+# imputation budget
+film_imputation<- film %>%
+  mutate(
+    revenue = ifelse(revenue == 0, NA, revenue),
+    budget = ifelse(budget == 0, NA, budget)
+  )
+value_imputed_budget <- data.frame(
+  original = film_imputation$budget,
+  imputed_mean = replace(film_imputation$budget, is.na(film_imputation$budget), mean(film_imputation$budget, na.rm = TRUE)),
+  imputed_median = replace(film_imputation$budget, is.na(film_imputation$budget), median(film_imputation$budget, na.rm = TRUE))
+)
+
+h1 <- ggplot(value_imputed_budget, aes(x = original)) +
+  geom_histogram(fill = "#ad1538", color = "#000000", position = "identity") +
+  ggtitle("Original distribution") +
+  theme_classic()
+h2 <- ggplot(value_imputed_budget, aes(x = imputed_mean)) +
+  geom_histogram(fill = "#1543ad", color = "#000000", position = "identity") +
+  ggtitle("Mean-imputed distribution") +
+  theme_classic()
+h3 <- ggplot(value_imputed_budget, aes(x = imputed_median)) +
+  geom_histogram(fill = "#ad8415", color = "#000000", position = "identity") +
+  ggtitle("Median-imputed distribution") +
+  theme_classic()
+
+film_imputation_numeric <- film_imputation %>%
+  select(budget,number_of_crew)
+md.pattern(film_imputation_numeric)
+mice_imputed_budget <- data.frame(
+  original = film_imputation_numeric$budget,
+  imputed_pmm = complete(mice(film_imputation_numeric, method = "pmm"))$budget,
+  imputed_cart = complete(mice(film_imputation_numeric, method = "cart"))$budget,
+  imputed_lasso = complete(mice(film_imputation_numeric, method = "lasso.norm"))$budget
+)
+
+
+h4 <- ggplot(mice_imputed_budget, aes(x = imputed_pmm)) +
+  geom_histogram(fill = "#15ad4f", color = "#000000", position = "identity") +
+  ggtitle("pmm-imputed distribution") +
+  theme_classic()
+h5 <- ggplot(mice_imputed_budget, aes(x = imputed_cart)) +
+  geom_histogram(fill = "#1543ad", color = "#000000", position = "identity") +
+  ggtitle("cart-imputed distribution") +
+  theme_classic()
+h6 <- ggplot(mice_imputed_budget, aes(x = imputed_lasso)) +
+  geom_histogram(fill = "#ad8415", color = "#000000", position = "identity") +
+  ggtitle("lasso-imputed distribution") +
+  theme_classic()
+
+
+
+film_imputation <- film_imputation %>%
+  mutate(imputed_pmm_budget = mice_imputed_budget$imputed_pmm)
+
+# imputation revenue
+value_imputed <- data.frame(
+  original = film_imputation$revenue,
+  imputed_mean = replace(film_imputation$revenue, is.na(film_imputation$revenue), mean(film_imputation$revenue, na.rm = TRUE)),
+  imputed_median = replace(film_imputation$revenue, is.na(film_imputation$revenue), median(film_imputation$revenue, na.rm = TRUE))
+)
+
+h2_1 <- ggplot(value_imputed, aes(x = original)) +
+  geom_histogram(fill = "#ad1538", color = "#000000", position = "identity") +
+  ggtitle("Original distribution") +
+  scale_x_sqrt() +
+  theme_classic()
+h2_2 <- ggplot(value_imputed, aes(x = imputed_mean)) +
+  geom_histogram(fill = "#1543ad", color = "#000000", position = "identity") +
+  ggtitle("Mean-imputed distribution") +
+  scale_x_sqrt() +
+  theme_classic()
+h2_3 <- ggplot(value_imputed, aes(x = imputed_median)) +
+  geom_histogram(fill = "#ad8415", color = "#000000", position = "identity") +
+  ggtitle("Median-imputed distribution") +
+  scale_x_sqrt() +
+  theme_classic()
+
+film_imputation_numeric <- film_imputation %>%
+  select(revenue,imdb_votes_count)
+md.pattern(film_imputation_numeric)
+mice_imputed <- data.frame(
+  original = film_imputation_numeric$revenue,
+  imputed_pmm = complete(mice(film_imputation_numeric, method = "pmm"))$revenue,
+  imputed_cart = complete(mice(film_imputation_numeric, method = "cart"))$revenue,
+  imputed_lasso = complete(mice(film_imputation_numeric, method = "lasso.norm"))$revenue
+)
+
+h2_4 <- ggplot(mice_imputed, aes(x = imputed_pmm)) +
+  geom_histogram(fill = "#15ad4f", color = "#000000", position = "identity") +
+  ggtitle("pmm-imputed distribution") +
+  scale_x_sqrt() +
+  theme_classic()
+h2_5 <- ggplot(mice_imputed, aes(x = imputed_cart)) +
+  geom_histogram(fill = "#1543ad", color = "#000000", position = "identity") +
+  ggtitle("cart-imputed distribution") +
+  scale_x_sqrt() +
+  theme_classic()
+h2_6 <- ggplot(mice_imputed, aes(x = imputed_lasso)) +
+  geom_histogram(fill = "#ad8415", color = "#000000", position = "identity") +
+  ggtitle("lasso-imputed distribution") +
+  scale_x_sqrt() +
+  theme_classic()
+
+
+
+film_imputation <- film_imputation %>%
+  mutate(imputed_cart_revenue = mice_imputed$imputed_cart,
+         box = ifelse(imputed_cart_revenue > imputed_pmm_budget, 1, 0),
+         box_artistic = ifelse(box == 1 & artistic == 1, 1, 0))
+
+film_final <- film_imputation %>%
+  select(id,title_word_count,runtime,adult,english,origin_country_us,holiday_dummy,genres_category,release_date,number_of_crew,number_of_departments,number_of_com,gender_ratio_female_total, gender_ratio_female_acting, gender_ratio_female_crew, imputed_pmm_budget,imputed_cart_revenue,box,artistic,box_artistic) %>%
+  distinct(id, .keep_all = TRUE) %>%
+  filter(complete.cases(.))
+
+# Continuous profit
+film_final <- film_final %>%
+  mutate(profit = imputed_cart_revenue - imputed_pmm_budget,
+    log_profit = log(pmax(film_final$profit, 0) + 1),
+    log_revenue = log(pmax(film_final$imputed_cart_revenue, 0) + 1),
+    log_budget = log(pmax(film_final$imputed_pmm_budget, 0) + 1)) 
+film_final <- film_final %>%
+  mutate(
+    adult = as.factor(adult),
+    english = as.factor(english),
+    genres_category = as.factor(genres_category),
+    origin_country_us = as.factor(origin_country_us),
+    holiday_dummy = as.factor(holiday_dummy)
+  )  %>%
+  rename(movie_id = id) 
+
+write.csv(film_final, "film_final.csv", row.names = FALSE)
+```
+

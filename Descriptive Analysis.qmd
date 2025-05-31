@@ -1,0 +1,119 @@
+---
+title: "Descriptive Analysis"
+format: pdf
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+library(dplyr)
+library(modelsummary)
+library(kableExtra)
+film_final_merged <- read.csv("/Users/yvette/Desktop/film_final_merged.csv")
+```
+
+
+
+```{r}
+#| echo: false
+#| warning: false
+film_final_new <- film_final_merged |>
+  mutate(box = if_else(box == 1, "Box office success", "Box office failure"),
+         artistic = if_else(artistic  == 1, "Artistic  success", "Artistic  failure"),
+         box_artistic = if_else(box_artistic == 1, "Overall success", "Overall failure")) %>%
+  mutate(adult = factor(adult,labels=c("General","Adult")),
+         english = factor(english,labels=c("Non-English","English")),
+         holiday_dummy = factor(holiday_dummy, labels = c("General","Holiday movies")),
+         origin_country_us = factor(origin_country_us, labels = c("Other countries","US")),
+         genres_category = as.factor(genres_category))
+
+film_grouped_box <- film_final_new %>%
+  select(box,
+         `Budget (log)` = log_budget,
+         `Revenue (log)` = log_revenue,
+         `Profit (log)` = log_profit,
+         `Title word count` = title_word_count,
+         `Runtime (minutes)` = runtime,
+         `Crew size` = number_of_crew,
+         `Number of departments` = number_of_departments,
+         `Number of production companies` = number_of_com,
+         `Female Gender ratio (acting)` = gender_ratio_female_acting,
+         `Female Gender ratio (crew)` = gender_ratio_female_crew,
+         `Female Gender ratio (total)` = gender_ratio_female_total,
+         Adult = adult,
+         English = english,
+         Genres = genres_category,
+         `Holiday Movies` = holiday_dummy,
+         `Origin Country` = origin_country_us)
+film_grouped_box %>% 
+  datasummary_balance(`Budget (log)` + `Revenue (log)` +`Profit (log)` +`Title word count`+`Runtime (minutes)`+`Crew size`+`Number of departments`+ `Number of production companies`+ `Female Gender ratio (acting)`+ `Female Gender ratio (crew)`+ `Female Gender ratio (total)` + Adult + English + Genres + `Holiday Movies` + `Origin Country`~ box,
+                      data=.,
+                      midrule=" ",
+                      linesep="\\midrule \\addlinespace[2pt]",
+                      booktabs=TRUE,
+                      title = "Descriptive Statistic of Box Office Performance",
+                      dinm = FALSE) 
+
+film_grouped_artistic <-film_final_new %>%
+  select(artistic,
+         `Budget (log)` = log_budget,
+         `Revenue (log)` = log_revenue,
+         `Profit (log)` = log_profit,
+         `Title word count` = title_word_count,
+         `Runtime (minutes)` = runtime,
+         `Crew size` = number_of_crew,
+         `Number of departments` = number_of_departments,
+         `Number of production companies` = number_of_com,
+         `Female Gender ratio (acting)` = gender_ratio_female_acting,
+         `Female Gender ratio (crew)` = gender_ratio_female_crew,
+         `Female Gender ratio (total)` = gender_ratio_female_total,
+         Adult = adult,
+         English = english,
+         Genres = genres_category,
+         `Holiday Movies` = holiday_dummy,
+         `Origin Country` = origin_country_us)
+film_grouped_artistic %>% 
+  datasummary_balance(`Budget (log)` + `Revenue (log)` +`Profit (log)` +`Title word count`+`Runtime (minutes)`+`Crew size`+`Number of departments`+ `Number of production companies`+ `Female Gender ratio (acting)`+ `Female Gender ratio (crew)`+ `Female Gender ratio (total)` + Adult + English + Genres + `Holiday Movies` + `Origin Country` ~ artistic,
+                      data=.,
+                      midrule=" ",
+                      linesep="\\midrule \\addlinespace[2pt]",
+                      booktabs=TRUE,
+                      title = "Descriptive Statistic of Artistics Performance",
+                      dinm = FALSE) 
+
+film_grouped_all <- bind_rows(film_final_new,film_final_new, .id="group") %>% 
+  mutate(group=ifelse(box_artistic=="Overall success" & group=="1",1,
+                      ifelse(box_artistic=="Overall failure" & group=="1",2,3))) %>%
+  mutate(group=factor(group,labels=c("Overall success","Overall failure","All")))  %>%
+  select(group,
+         `Budget (log)` = log_budget,
+         `Revenue (log)` = log_revenue,
+         `Profit (log)` = log_profit,
+         `Title word count` = title_word_count,
+         `Runtime (minutes)` = runtime,
+         `Crew size` = number_of_crew,
+         `Number of departments` = number_of_departments,
+         `Number of production companies` = number_of_com,
+         `Female Gender ratio (acting)` = gender_ratio_female_acting,
+         `Female Gender ratio (crew)` = gender_ratio_female_crew,
+         `Female Gender ratio (total)` = gender_ratio_female_total,
+         Adult = adult,
+         English = english,
+         Genres = genres_category,
+         `Holiday Movies` = holiday_dummy,
+         `Origin Country` = origin_country_us)
+film_grouped_all %>% 
+  datasummary_balance(`Budget (log)` + `Revenue (log)` +`Profit (log)` +`Title word count`+`Runtime (minutes)`+`Crew size`+`Number of departments`+ `Number of production companies`+ `Female Gender ratio (acting)`+ `Female Gender ratio (crew)`+ `Female Gender ratio (total)` + Adult + English + Genres + `Holiday Movies` + `Origin Country`~ group,
+                      data=.,
+                      midrule=" ",
+                      linesep="\\midrule \\addlinespace[2pt]",
+                      booktabs=TRUE,
+                      title = "Descriptive Statistic of Overall Performance",
+                      dinm = FALSE)
+
+```
+
+
+

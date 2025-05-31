@@ -1,0 +1,143 @@
+---
+title: "Regression"
+format: pdf
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| warning: false
+#| include: false
+library(dplyr)
+film_final <- read.csv("/Users/yvette/Desktop/film_final_merged.csv")
+```
+
+```{r}
+#| echo: false
+#| warning: false
+film_final$log_number_of_com <- log(pmax(film_final$number_of_com, 0) + 1)
+film_final$log_title_word_count <- log(pmax(film_final$title_word_count, 0) + 1)
+film_final$log_number_of_departments <- log(pmax(film_final$number_of_departments, 0) + 1)
+film_final$log_number_of_crew <- log(pmax(film_final$number_of_crew, 0) + 1)
+
+film_final <- film_final%>%
+  mutate(adult = as.factor(adult),
+         english = as.factor(english),
+         holiday_dummy = as.factor(holiday_dummy),
+         origin_country_us = as.factor(origin_country_us),
+         genres_category = as.factor(genres_category))
+```
+
+```{r}
+logit_model_box_1 <- glm(
+  box ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments + origin_country_us * holiday_dummy + gender_ratio_female_total + I(gender_ratio_female_total^2) + gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2),
+  data = film_final,
+  family = binomial
+)
+
+logit_model_box_2 <- glm(
+  box ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2) + avg_log_profit_pre + avg_log_profit_pre_cumulative + avg_actor_career_length + avg_director_career_length + avg_producer_career_length+ avg_prev_actor_box_success + avg_prev_actor_artistic_success + avg_prev_actor_box_artistic_success + avg_prev_director_box_success + avg_prev_director_artistic_success + avg_prev_director_box_artistic_success + avg_prev_producer_box_success + avg_prev_producer_artistic_success + avg_prev_producer_box_artistic_success + avg_freq_prev_actor_box_success + avg_freq_prev_actor_artistic_success + avg_freq_prev_actor_box_artistic_success + avg_freq_prev_director_box_success + avg_freq_prev_director_artistic_success +
+avg_freq_prev_director_box_artistic_success + avg_freq_prev_producer_box_success + 
+avg_freq_prev_producer_artistic_success + avg_freq_prev_producer_box_artistic_success,
+  data = film_final,
+  family = binomial
+)
+
+logit_model_box_3 <- glm(
+  box ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2) + avg_da_collaboration_count + avg_pa_collaboration_count + avg_pd_collaboration_count + avg_log_profit_pre_co + avg_log_profit_pre_cumulative_co + avg_prev_da_collaboration_box_success + avg_prev_da_collaboration_artistic_success +
+avg_prev_da_collaboration_box_artistic_success + avg_prev_pa_collaboration_box_success +
+avg_prev_pa_collaboration_artistic_success + avg_prev_pa_collaboration_box_artistic_success + avg_prev_pd_collaboration_box_success + avg_prev_pd_collaboration_artistic_success + avg_prev_pd_collaboration_box_artistic_success + avg_freq_prev_da_collaboration_box_success + avg_freq_prev_da_collaboration_artistic_success + avg_freq_prev_da_collaboration_box_artistic_success + avg_freq_prev_pa_collaboration_box_success + avg_freq_prev_pa_collaboration_artistic_success + avg_freq_prev_pa_collaboration_box_artistic_success + avg_freq_prev_pd_collaboration_box_success + avg_freq_prev_pd_collaboration_artistic_success + avg_freq_prev_pd_collaboration_box_artistic_success,
+  data = film_final,
+  family = binomial
+)
+
+logit_model_box_4 <- glm(
+  box ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2) + + avg_log_profit_pre + avg_log_profit_pre_cumulative + avg_actor_career_length + avg_director_career_length + avg_producer_career_length+ avg_prev_actor_box_success + avg_prev_actor_artistic_success + avg_prev_actor_box_artistic_success + avg_prev_director_box_success + avg_prev_director_artistic_success + avg_prev_director_box_artistic_success + avg_prev_producer_box_success + avg_prev_producer_artistic_success + avg_prev_producer_box_artistic_success + avg_freq_prev_actor_box_success + avg_freq_prev_actor_artistic_success + avg_freq_prev_actor_box_artistic_success + avg_freq_prev_director_box_success + avg_freq_prev_director_artistic_success +
+avg_freq_prev_director_box_artistic_success + avg_freq_prev_producer_box_success + 
+avg_freq_prev_producer_artistic_success + avg_freq_prev_producer_box_artistic_success + avg_da_collaboration_count + avg_pa_collaboration_count + avg_pd_collaboration_count + avg_log_profit_pre_co + avg_log_profit_pre_cumulative_co + avg_prev_da_collaboration_box_success + avg_prev_da_collaboration_artistic_success +
+avg_prev_da_collaboration_box_artistic_success + avg_prev_pa_collaboration_box_success +
+avg_prev_pa_collaboration_artistic_success + avg_prev_pa_collaboration_box_artistic_success + avg_prev_pd_collaboration_box_success + avg_prev_pd_collaboration_artistic_success + avg_prev_pd_collaboration_box_artistic_success + avg_freq_prev_da_collaboration_box_success + avg_freq_prev_da_collaboration_artistic_success + avg_freq_prev_da_collaboration_box_artistic_success + avg_freq_prev_pa_collaboration_box_success + avg_freq_prev_pa_collaboration_artistic_success + avg_freq_prev_pa_collaboration_box_artistic_success + avg_freq_prev_pd_collaboration_box_success + avg_freq_prev_pd_collaboration_artistic_success + avg_freq_prev_pd_collaboration_box_artistic_success,
+  data = film_final,
+  family = binomial
+)
+
+summary(logit_model_box_4)
+```
+
+```{r}
+logit_model_artistic_1 <- glm(
+  artistic ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments + origin_country_us * holiday_dummy + gender_ratio_female_total + I(gender_ratio_female_total^2) + gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2),
+  data = film_final,
+  family = binomial
+)
+
+logit_model_artistic_2 <- glm(
+  artistic ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2) + avg_log_profit_pre + avg_log_profit_pre_cumulative + avg_actor_career_length + avg_director_career_length + avg_producer_career_length+ avg_prev_actor_box_success + avg_prev_actor_artistic_success + avg_prev_actor_box_artistic_success + avg_prev_director_box_success + avg_prev_director_artistic_success + avg_prev_director_box_artistic_success + avg_prev_producer_box_success + avg_prev_producer_artistic_success + avg_prev_producer_box_artistic_success + avg_freq_prev_actor_box_success + avg_freq_prev_actor_artistic_success + avg_freq_prev_actor_box_artistic_success + avg_freq_prev_director_box_success + avg_freq_prev_director_artistic_success +
+avg_freq_prev_director_box_artistic_success + avg_freq_prev_producer_box_success + 
+avg_freq_prev_producer_artistic_success + avg_freq_prev_producer_box_artistic_success,
+  data = film_final,
+  family = binomial
+)
+
+logit_model_artistic_3 <- glm(
+  artistic ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2) + avg_da_collaboration_count + avg_pa_collaboration_count + avg_pd_collaboration_count + avg_log_profit_pre_co + avg_log_profit_pre_cumulative_co + avg_prev_da_collaboration_box_success + avg_prev_da_collaboration_artistic_success +
+avg_prev_da_collaboration_box_artistic_success + avg_prev_pa_collaboration_box_success +
+avg_prev_pa_collaboration_artistic_success + avg_prev_pa_collaboration_box_artistic_success + avg_prev_pd_collaboration_box_success + avg_prev_pd_collaboration_artistic_success + avg_prev_pd_collaboration_box_artistic_success + avg_freq_prev_da_collaboration_box_success + avg_freq_prev_da_collaboration_artistic_success + avg_freq_prev_da_collaboration_box_artistic_success + avg_freq_prev_pa_collaboration_box_success + avg_freq_prev_pa_collaboration_artistic_success + avg_freq_prev_pa_collaboration_box_artistic_success + avg_freq_prev_pd_collaboration_box_success + avg_freq_prev_pd_collaboration_artistic_success + avg_freq_prev_pd_collaboration_box_artistic_success,
+  data = film_final,
+  family = binomial
+)
+
+logit_model_artistic_4 <- glm(
+  artistic ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2) + avg_log_profit_pre + avg_log_profit_pre_cumulative + avg_actor_career_length + avg_director_career_length + avg_producer_career_length+ avg_prev_actor_box_success + avg_prev_actor_artistic_success + avg_prev_actor_box_artistic_success + avg_prev_director_box_success + avg_prev_director_artistic_success + avg_prev_director_box_artistic_success + avg_prev_producer_box_success + avg_prev_producer_artistic_success + avg_prev_producer_box_artistic_success + avg_freq_prev_actor_box_success + avg_freq_prev_actor_artistic_success + avg_freq_prev_actor_box_artistic_success + avg_freq_prev_director_box_success + avg_freq_prev_director_artistic_success +
+avg_freq_prev_director_box_artistic_success + avg_freq_prev_producer_box_success + 
+avg_freq_prev_producer_artistic_success + avg_freq_prev_producer_box_artistic_success + avg_da_collaboration_count + avg_pa_collaboration_count + avg_pd_collaboration_count + avg_log_profit_pre_co + avg_log_profit_pre_cumulative_co + avg_prev_da_collaboration_box_success + avg_prev_da_collaboration_artistic_success +
+avg_prev_da_collaboration_box_artistic_success + avg_prev_pa_collaboration_box_success +
+avg_prev_pa_collaboration_artistic_success + avg_prev_pa_collaboration_box_artistic_success + avg_prev_pd_collaboration_box_success + avg_prev_pd_collaboration_artistic_success + avg_prev_pd_collaboration_box_artistic_success + avg_freq_prev_da_collaboration_box_success + avg_freq_prev_da_collaboration_artistic_success + avg_freq_prev_da_collaboration_box_artistic_success + avg_freq_prev_pa_collaboration_box_success + avg_freq_prev_pa_collaboration_artistic_success + avg_freq_prev_pa_collaboration_box_artistic_success + avg_freq_prev_pd_collaboration_box_success + avg_freq_prev_pd_collaboration_artistic_success + avg_freq_prev_pd_collaboration_box_artistic_success,
+  data = film_final,
+  family = binomial
+)
+
+summary(logit_model_artistic_4)
+```
+
+```{r}
+lm_model_revenue_1 <- lm(
+  log_revenue ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2),
+  data = film_final
+)
+
+lm_model_revenue_2 <- lm(
+  log_revenue ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2) + avg_log_profit_pre + avg_log_profit_pre_cumulative + avg_actor_career_length + avg_director_career_length + avg_producer_career_length +
+avg_prev_actor_box_success + avg_prev_director_box_success + avg_prev_producer_box_success  + avg_prev_actor_artistic_success + avg_prev_director_artistic_success + avg_prev_producer_artistic_success + avg_prev_actor_box_artistic_success + avg_prev_director_box_artistic_success + avg_prev_producer_box_artistic_success + 
+avg_freq_prev_actor_box_success + avg_freq_prev_director_box_success + avg_freq_prev_producer_box_success  + 
+avg_freq_prev_actor_artistic_success +  avg_freq_prev_director_artistic_success + avg_freq_prev_producer_artistic_success +
+avg_freq_prev_actor_box_artistic_success + avg_freq_prev_director_box_artistic_success + avg_freq_prev_producer_box_artistic_success,
+  data = film_final
+)
+
+lm_model_revenue_3 <- lm(
+  log_revenue ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2)  + avg_da_collaboration_count + avg_pa_collaboration_count + avg_pd_collaboration_count + avg_log_profit_pre_co + avg_log_profit_pre_cumulative_co +
+avg_prev_da_collaboration_box_success + avg_prev_pa_collaboration_box_success + avg_prev_pd_collaboration_box_success  + avg_prev_da_collaboration_artistic_success + avg_prev_pa_collaboration_artistic_success + avg_prev_pd_collaboration_artistic_success +  avg_prev_da_collaboration_box_artistic_success + avg_prev_pa_collaboration_box_artistic_success + avg_prev_pd_collaboration_box_artistic_success +
+avg_prev_da_collaboration_box_success + avg_prev_pa_collaboration_box_success + avg_prev_pd_collaboration_box_success + avg_prev_da_collaboration_artistic_success + avg_prev_pa_collaboration_artistic_success + avg_prev_pd_collaboration_artistic_success + avg_prev_da_collaboration_box_artistic_success +   avg_prev_pa_collaboration_box_artistic_success +  avg_prev_pd_collaboration_box_artistic_success + avg_freq_prev_da_collaboration_box_success + avg_freq_prev_pa_collaboration_box_success + avg_freq_prev_pd_collaboration_box_success +  avg_freq_prev_da_collaboration_artistic_success + avg_freq_prev_pa_collaboration_artistic_success + avg_freq_prev_pd_collaboration_artistic_success +   avg_freq_prev_da_collaboration_box_artistic_success +   avg_freq_prev_pa_collaboration_box_artistic_success +  avg_freq_prev_pd_collaboration_box_artistic_success,
+  data = film_final
+)
+
+lm_model_revenue_4 <- lm(
+  log_revenue ~ log_title_word_count + adult + english + runtime * log_budget + log_number_of_com * log_budget + genres_category + log_number_of_crew * log_number_of_departments +
+  gender_ratio_female_total + I(gender_ratio_female_total^2) +  origin_country_us * holiday_dummy +  gender_ratio_female_acting + gender_ratio_female_crew + I(gender_ratio_female_crew^2) + avg_log_profit_pre + avg_log_profit_pre_cumulative + avg_actor_career_length + avg_director_career_length + avg_producer_career_length + avg_da_collaboration_count + avg_pa_collaboration_count + avg_pd_collaboration_count + avg_log_profit_pre_co + avg_log_profit_pre_cumulative_co +
+avg_prev_actor_box_success + avg_prev_director_box_success + avg_prev_producer_box_success + avg_prev_da_collaboration_box_success + avg_prev_pa_collaboration_box_success + avg_prev_pd_collaboration_box_success + avg_prev_actor_artistic_success + avg_prev_director_artistic_success + avg_prev_producer_artistic_success + avg_prev_da_collaboration_artistic_success + avg_prev_pa_collaboration_artistic_success + avg_prev_pd_collaboration_artistic_success + avg_prev_actor_box_artistic_success + avg_prev_director_box_artistic_success + avg_prev_producer_box_artistic_success + avg_prev_da_collaboration_box_artistic_success + avg_prev_pa_collaboration_box_artistic_success + avg_prev_pd_collaboration_box_artistic_success +
+avg_freq_prev_actor_box_success + avg_freq_prev_director_box_success + avg_freq_prev_producer_box_success + avg_freq_prev_da_collaboration_box_success + avg_freq_prev_pa_collaboration_box_success + avg_freq_prev_pd_collaboration_box_success + 
+avg_freq_prev_actor_artistic_success +  avg_freq_prev_director_artistic_success + avg_freq_prev_producer_artistic_success + avg_freq_prev_da_collaboration_artistic_success + avg_freq_prev_pa_collaboration_artistic_success + avg_freq_prev_pd_collaboration_artistic_success + avg_freq_prev_actor_box_artistic_success + avg_freq_prev_director_box_artistic_success + avg_freq_prev_producer_box_artistic_success  +   avg_freq_prev_da_collaboration_box_artistic_success +   avg_freq_prev_pa_collaboration_box_artistic_success +  avg_freq_prev_pd_collaboration_box_artistic_success,
+  data = film_final
+)
+summary(lm_model_revenue_4)
+```
